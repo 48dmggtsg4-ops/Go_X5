@@ -17,7 +17,6 @@ func (b BaseNotifier) Label(message string) string {
 	return "[" + b.Channel + "] " + message
 }
 
-// Имя канала доступно через встраивание BaseNotifier.
 func (b BaseNotifier) Name() string {
 	return b.Channel
 }
@@ -73,7 +72,7 @@ func (n *EmailNotifier) Send(message string) error {
 		return ErrEmptyMessage
 	}
 	if n.Address == "" {
-		return &SendError{Channel: n.Channel, Reason: "нет адреса"}
+		return &SendError{Channel: n.Channel, Reason: "не задан адрес"}
 	}
 	n.Messages = append(n.Messages, n.Label(message))
 	return nil
@@ -84,7 +83,7 @@ func (n *PushNotifier) Send(message string) error {
 		return ErrEmptyMessage
 	}
 	if n.DeviceID == "" {
-		return &SendError{Channel: n.Channel, Reason: "отсутствует DeviceID"}
+		return &SendError{Channel: n.Channel, Reason: "не задан device id"}
 	}
 	n.Messages = append(n.Messages, n.Label(message))
 	return nil
@@ -93,7 +92,7 @@ func (n *PushNotifier) Send(message string) error {
 func Dispatch(all []Notifier, message string) error {
 	for _, n := range all {
 		if err := n.Send(message); err != nil {
-			return fmt.Errorf("%s: %w", channelName(n), err)
+			return fmt.Errorf("канал %s: %w", channelName(n), err)
 		}
 	}
 	return nil
@@ -102,7 +101,7 @@ func Dispatch(all []Notifier, message string) error {
 func SafeSend(n Notifier, message string) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("%w, %s", ErrNotifierPanic, r)
+			err = fmt.Errorf("%w, %v", ErrNotifierPanic, r)
 		}
 	}()
 	return n.Send(message)
