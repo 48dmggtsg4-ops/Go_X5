@@ -1,5 +1,10 @@
 package practice
 
+import (
+	"errors"
+	"fmt"
+)
+
 type Notifier interface {
 	Send(message string) error
 }
@@ -10,6 +15,11 @@ type BaseNotifier struct {
 
 func (b BaseNotifier) Label(message string) string {
 	return "[" + b.Channel + "] " + message
+}
+
+// Имя канала доступно через встраивание BaseNotifier.
+func (b BaseNotifier) Name() string {
+	return b.Channel
 }
 
 type EmailNotifier struct {
@@ -24,27 +34,115 @@ type PushNotifier struct {
 	Messages []string
 }
 
+// Дополнительный контракт только для подписи ошибки.
+// Основной интерфейс Notifier остаётся прежним.
+type namedNotifier interface {
+	Name() string
+}
+
+func channelName(n Notifier) string {
+	if named, ok := n.(namedNotifier); ok {
+		return named.Name()
+	}
+	return fmt.Sprintf("%T", n)
+}
+
+var ErrNotifierPanic = errors.New("паника канала")
+
+type SendError struct {
+	Channel string
+	Reason  string
+}
+
+type BrokenNotifier struct {
+	BaseNotifier
+}
+
+func (n *BrokenNotifier) Send(message string) error {
+	panic("драйвер канала повреждён")
+}
+
+var ErrEmptyMessage error = errors.New("пустое сообщение")
+
+func (e *SendError) Error() string {
+	return "канал " + e.Channel + ": " + e.Reason
+}
+
 func (n *EmailNotifier) Send(message string) error {
-	// TODO: добавьте форматированное сообщение в Messages.
+	if message == "" {
+		return ErrEmptyMessage
+	}
+	if n.Address == "" {
+		return &SendError{Channel: n.Channel, Reason: "нет адреса"}
+	}
+	n.Messages = append(n.Messages, n.Label(message))
 	return nil
 }
 
 func (n *PushNotifier) Send(message string) error {
-	// TODO: добавьте форматированное сообщение в Messages.
+	if message == "" {
+		return ErrEmptyMessage
+	}
+	if n.DeviceID == "" {
+		return &SendError{Channel: n.Channel, Reason: "отсутствует DeviceID"}
+	}
+	n.Messages = append(n.Messages, n.Label(message))
 	return nil
 }
 
 func Dispatch(all []Notifier, message string) error {
-	// TODO: вызовите Send у каналов по порядку, верните первую ошибку.
+	for _, n := range all {
+		if err := n.Send(message); err != nil {
+			return fmt.Errorf("%s: %w", channelName(n), err)
+		}
+	}
 	return nil
 }
 
+func SafeSend(n Notifier, message string) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%w, %s", ErrNotifierPanic, r)
+		}
+	}()
+	return n.Send(message)
+}
+
+func SafeDispatch(all []Notifier, message string) []error {
+	var errs []error
+	for _, n := range all {
+		if err := SafeSend(n, message); err != nil {
+			errs = append(errs, fmt.Errorf("канал %s: %w", channelName(n), err))
+		}
+	}
+	return errs
+}
+
 func EmailAddress(n Notifier) (string, bool) {
-	// TODO: безопасно проверьте тип и указатель.
-	return "", false
+	email, ok := n.(*EmailNotifier)
+	if !ok || email == nil {
+		return "", false
+	}
+	return email.Address, true
 }
 
 func Describe(n Notifier) string {
-	// TODO: опишите email и push, остальные значения дают unknown.
-	return "unknown"
+	switch v := n.(type) {
+	case *EmailNotifier:
+		if v == nil {
+			return "unknown"
+		}
+		return "email: " + v.Address
+	case *PushNotifier:
+		if v == nil {
+			return "unknown"
+		}
+		return "push: " + v.DeviceID
+	default:
+		return "unknown"
+	}
 }
+
+var _ Notifier = (*EmailNotifier)(nil)
+
+var _ Notifier = (*PushNotifier)(nil)

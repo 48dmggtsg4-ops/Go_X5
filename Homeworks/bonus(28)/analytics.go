@@ -17,6 +17,28 @@ type Report struct {
 }
 
 func AnalyzeSales(sales []Sale) Report {
-	// TODO: реализуйте расчёт отчёта по правилам задания.
-	return Report{}
+	report := Report{RevenueByCategory: make(map[string]int64)}
+	unitsByProduct := make(map[string]int)
+	for _, s := range sales {
+		if s.Cancelled {
+			continue
+		}
+		if s.Product == "" || s.Category == "" || s.Quantity <= 0 || s.UnitPriceKopecks <= 0 {
+			report.InvalidSales++
+			continue
+		}
+		revenue := int64(s.Quantity) * s.UnitPriceKopecks
+		report.RevenueKopecks += revenue
+		report.UnitsSold += s.Quantity
+		report.RevenueByCategory[s.Category] += revenue
+		unitsByProduct[s.Product] += s.Quantity
+		bestUnits := 0
+		for prod, units := range unitsByProduct {
+			if units > bestUnits || (units == bestUnits && prod < report.TopProduct) {
+				bestUnits = units
+				report.TopProduct = prod
+			}
+		}
+	}
+	return report
 }

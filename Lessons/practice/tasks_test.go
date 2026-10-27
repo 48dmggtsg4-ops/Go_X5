@@ -1,150 +1,395 @@
 package practice
 
 import (
+	"errors"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 )
 
-type testError struct{}
-
-func (*testError) Error() string {
-	return "сбой канала"
-}
-
 type spy struct {
-	id       int
-	calls    *[]int
-	messages *[]string
-	err      error
+	name       string
+	calls      *[]string
+	result     error
+	panics     bool
+	panicValue any
 }
 
-func (s spy) Send(msg string) error {
-	*s.calls = append(*s.calls, s.id)
-	*s.messages = append(*s.messages, msg)
-	return s.err
+func (s *spy) Name() string {
+	return s.name
 }
 
-func TestDispatch(t *testing.T) {
-	for _, tc := range []struct {
-		name        string
-		count, fail int
-	}{
-		{"nil", 0, -1}, {"single", 1, -1}, {"all", 3, -1}, {"first_error", 3, 0}, {"middle_error", 3, 1}, {"last_error", 3, 2},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var calls []int
-			var msgs []string
-			var all []Notifier
-			var wantErr error
-			failure := &testError{}
-			for i := 0; i < tc.count; i++ {
-				var err error
-				if i == tc.fail {
-					err = failure
-					wantErr = err
+func (s *spy) Send(message string) error {
+	if s.calls != nil {
+		*s.calls = append(*s.calls, s.name+":"+message)
+	}
+	if s.panics {
+		panic(s.panicValue)
+	}
+	return s.result
+}
+
+type unnamed struct {
+	result error
+}
+
+func (n unnamed) Send(message string) error {
+	return n.result
+}
+
+// Помощник не даёт незавершённому SafeSend оборвать весь набор тестов.
+func withoutPanic(t *testing.T, action func()) {
+	t.Helper()
+	defer func() {
+		if value := recover(); value != nil {
+			t.Fatalf("паника вышла за границу: %v", value)
+		}
+	}()
+	action()
+}
+
+func newEmail() *EmailNotifier {
+	return &EmailNotifier{
+		BaseNotifier: BaseNotifier{Channel: "email"},
+		Address:      "student@example.com",
+	}
+}
+
+func newPush() *PushNotifier {
+	return &PushNotifier{
+		BaseNotifier: BaseNotifier{Channel: "push"},
+		DeviceID:     "phone-1",
+	}
+}
+
+func TestStep1Sentinel(t *testing.T) {
+	if ErrEmptyMessage == nil {
+		t.Fatal("создайте ErrEmptyMessage через errors.New")
+	}
+	if ErrEmptyMessage.Error() != "пустое сообщение" {
+		t.Fatalf("неверный текст: %q", ErrEmptyMessage.Error())
+	}
+}
+
+func TestStep1Channels(t *testing.T) {
+	for _, channel := range []string{"email", "push"} {
+		t.Run(channel, func(t *testing.T) {
+			email, push := newEmail(), newPush()
+			var n Notifier = email
+			messages := &email.Messages
+			if channel == "push" {
+				n = push
+				messages = &push.Messages
+			}
+			for _, message := range []string{"Заказ готов", "Ещё заказ", " "} {
+				if err := n.Send(message); err != nil {
+					t.Fatalf("Send(%q): %v", message, err)
 				}
-				all = append(all, spy{i, &calls, &msgs, err})
 			}
-			got := Dispatch(all, "Заказ №42")
-			if got != wantErr {
-				t.Fatalf("error=%v, want %v", got, wantErr)
+			want := []string{
+				"[" + channel + "] Заказ готов",
+				"[" + channel + "] Ещё заказ",
+				"[" + channel + "]  ",
 			}
-			n := tc.count
-			if tc.fail >= 0 {
-				n = tc.fail + 1
+			if !reflect.DeepEqual(*messages, want) {
+				t.Fatalf("история: %v, ожидается %v", *messages, want)
 			}
-			if len(calls) != n {
-				t.Fatalf("calls=%v, want %d", calls, n)
-			}
-			for i := 0; i < n; i++ {
-				if calls[i] != i || msgs[i] != "Заказ №42" {
-					t.Fatalf("calls=%v messages=%v", calls, msgs)
+			for i := 0; i < 2; i++ {
+				err := n.Send("")
+				if err == nil || err != ErrEmptyMessage {
+					t.Fatalf("пустой текст: ожидается тот же ErrEmptyMessage, получено %v", err)
 				}
+			}
+			if !reflect.DeepEqual(*messages, want) {
+				t.Fatalf("ошибка изменила историю: %v", *messages)
 			}
 		})
 	}
-	t.Run("empty_slice", func(t *testing.T) {
-		if err := Dispatch([]Notifier{}, "x"); err != nil {
+	t.Run("independent_instances", func(t *testing.T) {
+		first, second := newEmail(), newEmail()
+		if err := first.Send("Первое"); err != nil {
 			t.Fatal(err)
 		}
-	})
-}
-
-func TestChannels(t *testing.T) {
-	for _, tc := range []struct {
-		name, msg string
-	}{{"text", "Заказ готов"}, {"empty", ""}, {"unicode", "🛒 №42"}} {
-		t.Run(tc.name, func(t *testing.T) {
-			email := &EmailNotifier{BaseNotifier: BaseNotifier{Channel: "email"}, Address: "a@example.com"}
-			push := &PushNotifier{BaseNotifier: BaseNotifier{Channel: "push"}, DeviceID: "phone"}
-			for i := 0; i < 2; i++ {
-				if err := Dispatch([]Notifier{email, push}, tc.msg); err != nil {
-					t.Fatal(err)
-				}
-			}
-			for _, check := range []struct {
-				got     []string
-				channel string
-			}{{email.Messages, "email"}, {push.Messages, "push"}} {
-				want := []string{"[" + check.channel + "] " + tc.msg, "[" + check.channel + "] " + tc.msg}
-				if !reflect.DeepEqual(check.got, want) {
-					t.Errorf("%s: got %q want %q", check.channel, check.got, want)
-				}
-			}
-		})
-	}
-	t.Run("independent", func(t *testing.T) {
-		a, b := &EmailNotifier{}, &EmailNotifier{}
-		_ = a.Send("x")
-		if len(a.Messages) != 1 || len(b.Messages) != 0 {
-			t.Fatalf("a=%v b=%v", a.Messages, b.Messages)
-		}
-	})
-	t.Run("promoted_label", func(t *testing.T) {
-		e := EmailNotifier{BaseNotifier: BaseNotifier{Channel: "email"}}
-		if e.Label("x") != "[email] x" {
-			t.Fatal(e.Label("x"))
+		if len(second.Messages) != 0 {
+			t.Fatal("истории разных экземпляров смешались")
 		}
 	})
 }
 
-func TestEmailAddress(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		n    Notifier
-		want string
-		ok   bool
+func TestStep2Dispatch(t *testing.T) {
+	t.Run("empty_lists", func(t *testing.T) {
+		for _, all := range [][]Notifier{nil, {}} {
+			if err := Dispatch(all, ""); err != nil {
+				t.Fatalf("пустой список: %v", err)
+			}
+		}
+	})
+	t.Run("success_and_order", func(t *testing.T) {
+		var calls []string
+		all := []Notifier{
+			&spy{name: "one", calls: &calls},
+			&spy{name: "two", calls: &calls},
+		}
+		if err := Dispatch(all, "hello"); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(calls, []string{"one:hello", "two:hello"}) {
+			t.Fatalf("вызовы: %v", calls)
+		}
+	})
+	t.Run("wrap_and_stop", func(t *testing.T) {
+		root := errors.New("недоступен канал")
+		var calls []string
+		all := []Notifier{
+			&spy{name: "one", calls: &calls},
+			&spy{name: "two", calls: &calls, result: root},
+			&spy{name: "three", calls: &calls},
+		}
+		err := Dispatch(all, "hello")
+		if err == nil || err == root || !errors.Is(err, root) {
+			t.Fatalf("ожидается обёртка с исходной причиной, получено %v", err)
+		}
+		if !strings.Contains(err.Error(), "канал two:") {
+			t.Fatalf("нет имени канала: %v", err)
+		}
+		if !reflect.DeepEqual(calls, []string{"one:hello", "two:hello"}) {
+			t.Fatalf("нужно остановиться на первой ошибке: %v", calls)
+		}
+	})
+	t.Run("multiple_wraps", func(t *testing.T) {
+		root := errors.New("причина")
+		inner := fmt.Errorf("внутренний вызов: %w", root)
+		err := Dispatch([]Notifier{&spy{name: "email", result: inner}}, "hello")
+		if !errors.Is(fmt.Errorf("заказ: %w", err), root) {
+			t.Fatal("потеряна причина после нескольких обёрток")
+		}
+	})
+	t.Run("custom_type_preserved", func(t *testing.T) {
+		root := &SendError{Channel: "push", Reason: "нет настройки"}
+		err := Dispatch([]Notifier{&spy{name: "push", result: root}}, "hello")
+		var target *SendError
+		if !errors.As(err, &target) || target != root {
+			t.Fatalf("потерян исходный *SendError: %v", err)
+		}
+	})
+	t.Run("only_send_method", func(t *testing.T) {
+		root := errors.New("причина")
+		err := Dispatch([]Notifier{unnamed{result: root}}, "hello")
+		if err == nil || !errors.Is(err, root) || !strings.Contains(err.Error(), "practice.unnamed") {
+			t.Fatalf("канал без Name тоже должен работать: %v", err)
+		}
+	})
+}
+
+func TestStep3SafeSend(t *testing.T) {
+	t.Run("success_once", func(t *testing.T) {
+		var calls []string
+		n := &spy{name: "email", calls: &calls}
+		withoutPanic(t, func() {
+			if err := SafeSend(n, "hello"); err != nil {
+				t.Fatal(err)
+			}
+		})
+		if !reflect.DeepEqual(calls, []string{"email:hello"}) {
+			t.Fatalf("вызовы: %v", calls)
+		}
+	})
+	t.Run("ordinary_error_unchanged", func(t *testing.T) {
+		root := errors.New("обычная ошибка")
+		if err := SafeSend(&spy{result: root}, "hello"); err != root {
+			t.Fatalf("обычная ошибка должна вернуться без замены: %v", err)
+		}
+	})
+	cases := []struct {
+		name     string
+		value    any
+		fragment string
 	}{
-		{"email", &EmailNotifier{Address: "a@example.com"}, "a@example.com", true},
-		{"empty_address", &EmailNotifier{}, "", true},
-		{"push", &PushNotifier{}, "", false}, {"nil", nil, "", false},
-		{"typed_nil", (*EmailNotifier)(nil), "", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got, ok := EmailAddress(tc.n)
-			if got != tc.want || ok != tc.ok {
-				t.Fatalf("got %q,%v want %q,%v", got, ok, tc.want, tc.ok)
+		{name: "string", value: "поломка", fragment: "поломка"},
+		{name: "number", value: 42, fragment: "42"},
+		{name: "error", value: errors.New("внутренняя ошибка"), fragment: "внутренняя ошибка"},
+		{name: "nil", value: nil},
+	}
+	for _, tc := range cases {
+		t.Run("panic_"+tc.name, func(t *testing.T) {
+			withoutPanic(t, func() {
+				err := SafeSend(&spy{panics: true, panicValue: tc.value}, "hello")
+				if err == nil || !errors.Is(err, ErrNotifierPanic) {
+					t.Fatalf("паника не стала известной ошибкой: %v", err)
+				}
+				if tc.fragment != "" && !strings.Contains(err.Error(), tc.fragment) {
+					t.Fatalf("потерян текст паники: %v", err)
+				}
+			})
+		})
+	}
+	t.Run("broken_notifier", func(t *testing.T) {
+		withoutPanic(t, func() {
+			err := SafeSend(&BrokenNotifier{}, "hello")
+			if !errors.Is(err, ErrNotifierPanic) {
+				t.Fatalf("не распознана паника BrokenNotifier: %v", err)
+			}
+		})
+	})
+}
+
+func TestStep3SafeDispatch(t *testing.T) {
+	t.Run("empty_lists", func(t *testing.T) {
+		for _, all := range [][]Notifier{nil, {}} {
+			if failures := SafeDispatch(all, ""); len(failures) != 0 {
+				t.Fatalf("пустой список: %v", failures)
+			}
+		}
+	})
+	t.Run("all_success", func(t *testing.T) {
+		var calls []string
+		all := []Notifier{&spy{name: "one", calls: &calls}, &spy{name: "two", calls: &calls}}
+		if failures := SafeDispatch(all, "hello"); len(failures) != 0 {
+			t.Fatalf("лишние ошибки: %v", failures)
+		}
+		if !reflect.DeepEqual(calls, []string{"one:hello", "two:hello"}) {
+			t.Fatalf("вызовы: %v", calls)
+		}
+	})
+	t.Run("continue_after_each_failure", func(t *testing.T) {
+		root := errors.New("первая причина")
+		custom := &SendError{Channel: "custom", Reason: "нет настройки"}
+		var calls []string
+		all := []Notifier{
+			&spy{name: "ordinary", calls: &calls, result: root},
+			&spy{name: "broken", calls: &calls, panics: true, panicValue: "сбой"},
+			&spy{name: "custom", calls: &calls, result: custom},
+			&spy{name: "good", calls: &calls},
+		}
+		withoutPanic(t, func() {
+			failures := SafeDispatch(all, "hello")
+			if len(failures) != 3 {
+				t.Fatalf("нужны все три ошибки, получено %v", failures)
+			}
+			if !errors.Is(failures[0], root) || !errors.Is(failures[1], ErrNotifierPanic) {
+				t.Fatalf("причины или порядок потеряны: %v", failures)
+			}
+			var target *SendError
+			if !errors.As(failures[2], &target) || target != custom {
+				t.Fatal("потерян *SendError")
+			}
+			for i, name := range []string{"ordinary", "broken", "custom"} {
+				if !strings.Contains(failures[i].Error(), "канал "+name+":") {
+					t.Fatalf("ошибка без контекста: %v", failures[i])
+				}
+			}
+		})
+		want := []string{"ordinary:hello", "broken:hello", "custom:hello", "good:hello"}
+		if !reflect.DeepEqual(calls, want) {
+			t.Fatalf("вызовы: %v, ожидается %v", calls, want)
+		}
+	})
+	t.Run("real_channel_after_panic", func(t *testing.T) {
+		push := newPush()
+		withoutPanic(t, func() {
+			failures := SafeDispatch([]Notifier{&BrokenNotifier{}, push}, "Заказ готов")
+			if len(failures) != 1 || !errors.Is(failures[0], ErrNotifierPanic) {
+				t.Fatalf("ошибки: %v", failures)
+			}
+		})
+		if !reflect.DeepEqual(push.Messages, []string{"[push] Заказ готов"}) {
+			t.Fatalf("следующий канал не получил сообщение: %v", push.Messages)
+		}
+	})
+	t.Run("empty_message_each_channel", func(t *testing.T) {
+		email, push := newEmail(), newPush()
+		failures := SafeDispatch([]Notifier{email, push}, "")
+		if len(failures) != 2 {
+			t.Fatalf("каждый канал должен вернуть ошибку: %v", failures)
+		}
+		for _, err := range failures {
+			if err == nil || !errors.Is(err, ErrEmptyMessage) {
+				t.Fatalf("причина: %v", err)
+			}
+		}
+		if len(email.Messages) != 0 || len(push.Messages) != 0 {
+			t.Fatal("невалидный текст попал в историю")
+		}
+	})
+}
+
+func TestHomeworkSendError(t *testing.T) {
+	err := &SendError{Channel: "email", Reason: "не задан адрес"}
+	if err.Error() != "канал email: не задан адрес" {
+		t.Fatalf("неверное описание: %q", err.Error())
+	}
+	wrapped := fmt.Errorf("уровень 2: %w", fmt.Errorf("уровень 1: %w", err))
+	var target *SendError
+	if !errors.As(wrapped, &target) || target != err {
+		t.Fatal("не удалось извлечь исходный объект")
+	}
+}
+
+func TestHomeworkConfiguration(t *testing.T) {
+	for _, channel := range []string{"email", "push"} {
+		t.Run(channel, func(t *testing.T) {
+			email, push := newEmail(), newPush()
+			email.Address = ""
+			push.DeviceID = ""
+			var n Notifier = email
+			messages := &email.Messages
+			reason := "не задан адрес"
+			if channel == "push" {
+				n = push
+				messages = &push.Messages
+				reason = "не задан device id"
+			}
+			*messages = []string{"старая запись"}
+			err := n.Send("hello")
+			var target *SendError
+			if !errors.As(err, &target) {
+				t.Fatalf("нужен *SendError: %v", err)
+			}
+			if target.Channel != channel || target.Reason != reason {
+				t.Fatalf("неверные поля: %+v", target)
+			}
+			if !reflect.DeepEqual(*messages, []string{"старая запись"}) {
+				t.Fatal("ошибка настройки изменила историю")
+			}
+			err = n.Send("")
+			if err == nil || err != ErrEmptyMessage {
+				t.Fatalf("пустой текст проверяется раньше настроек: %v", err)
+			}
+			if !reflect.DeepEqual(*messages, []string{"старая запись"}) {
+				t.Fatal("пустой текст изменил историю")
 			}
 		})
 	}
 }
 
-func TestDescribe(t *testing.T) {
-	var calls []int
-	var msgs []string
-	for _, tc := range []struct {
-		name string
-		n    Notifier
-		want string
+func TestRegressionHelpers(t *testing.T) {
+	email, push := newEmail(), newPush()
+	var nilEmail *EmailNotifier
+	var nilPush *PushNotifier
+	cases := []struct {
+		name        string
+		n           Notifier
+		address     string
+		ok          bool
+		description string
 	}{
-		{"email", &EmailNotifier{Address: "a@example.com"}, "email: a@example.com"},
-		{"push", &PushNotifier{DeviceID: "phone"}, "push: phone"},
-		{"other", spy{calls: &calls, messages: &msgs}, "unknown"}, {"nil", nil, "unknown"},
-		{"nil_email", (*EmailNotifier)(nil), "unknown"}, {"nil_push", (*PushNotifier)(nil), "unknown"},
-	} {
+		{"email", email, email.Address, true, "email: " + email.Address},
+		{"push", push, "", false, "push: " + push.DeviceID},
+		{"nil_interface", nil, "", false, "unknown"},
+		{"nil_email", nilEmail, "", false, "unknown"},
+		{"nil_push", nilPush, "", false, "unknown"},
+		{"other", &spy{}, "", false, "unknown"},
+		{"empty_address", &EmailNotifier{}, "", true, "email: "},
+	}
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := Describe(tc.n); got != tc.want {
-				t.Fatalf("got %q want %q", got, tc.want)
+			address, ok := EmailAddress(tc.n)
+			if address != tc.address || ok != tc.ok {
+				t.Fatalf("EmailAddress = %q, %v", address, ok)
+			}
+			if got := Describe(tc.n); got != tc.description {
+				t.Fatalf("Describe = %q, ожидается %q", got, tc.description)
 			}
 		})
 	}
