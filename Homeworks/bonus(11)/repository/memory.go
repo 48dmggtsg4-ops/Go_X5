@@ -1,6 +1,9 @@
 package repository
 
-import "example.com/delivery/service"
+import (
+	"example.com/delivery/service"
+	"fmt"
+)
 
 type Memory struct {
 	pricers map[string]service.DeliveryPricer
@@ -23,6 +26,14 @@ func Default() *Memory {
 }
 
 func (m *Memory) Find(name string) (service.DeliveryPricer, error) {
-	// TODO: верните тариф или ошибку, сохраняющую ErrUnknownTariff через %w.
-	return nil, service.ErrUnknownTariff
+	pricer, ok := m.pricers[name]
+	if !ok {
+		return nil, fmt.Errorf(
+			"тариф %q: %w",
+			name,
+			service.ErrUnknownTariff,
+		)
+	}
+
+	return pricer, nil
 }

@@ -19,11 +19,9 @@ type OrderPriceError struct {
 }
 
 func (e *OrderPriceError) Error() string {
-	// TODO: добавьте контекст заказа и тарифа, не теряя причину.
-	return fmt.Sprintf("заказ %s, тариф %s", e.OrderID, e.Tariff)
+	return fmt.Sprintf("заказ %s, тариф %s: %v", e.OrderID, e.Tariff, e.Err)
 }
 
 func (e *OrderPriceError) Unwrap() error {
-	// TODO: верните исходную причину.
-	return nil
+	return e.Err
 }

@@ -11,13 +11,24 @@ type BaseTariff struct {
 }
 
 func (b BaseTariff) validate(weightGrams, distanceKM int) error {
-	// TODO: проверьте вес, положительную дистанцию и максимальную дистанцию.
+	if weightGrams <= 0 {
+		return ErrInvalidWeight
+	}
+	if distanceKM <= 0 {
+		return ErrInvalidDistance
+	}
+	if distanceKM > b.MaxDistanceKM {
+		return ErrDistanceTooLarge
+	}
 	return nil
 }
 
 func billableKilograms(weightGrams int) int64 {
-	// TODO: округлите граммы вверх до целого оплачиваемого килограмма.
-	return 0
+	kilograms := weightGrams / 1000
+	if weightGrams%1000 != 0 {
+		kilograms++
+	}
+	return int64(kilograms)
 }
 
 type Courier struct {
@@ -30,8 +41,11 @@ func NewCourier() Courier {
 }
 
 func (t Courier) Price(weightGrams, distanceKM int) (int64, error) {
-	// TODO: реализуйте формулу тарифа.
-	return 0, nil
+	if err := t.validate(weightGrams, distanceKM); err != nil {
+		return 0, err
+	}
+	price := t.BasePriceKopecks + billableKilograms(weightGrams)*t.PerKGKopecks + int64(distanceKM)*t.PerKMKopecks
+	return price, nil
 }
 
 type Pickup struct {
@@ -44,8 +58,11 @@ func NewPickup() Pickup {
 }
 
 func (t Pickup) Price(weightGrams, distanceKM int) (int64, error) {
-	// TODO: реализуйте формулу тарифа.
-	return 0, nil
+	if err := t.validate(weightGrams, distanceKM); err != nil {
+		return 0, err
+	}
+	price := t.BasePriceKopecks + billableKilograms(weightGrams)*t.PerKGKopecks + int64(distanceKM)*t.PerKMKopecks
+	return price, nil
 }
 
 type Express struct {
@@ -58,8 +75,11 @@ func NewExpress() Express {
 }
 
 func (t Express) Price(weightGrams, distanceKM int) (int64, error) {
-	// TODO: реализуйте формулу тарифа.
-	return 0, nil
+	if err := t.validate(weightGrams, distanceKM); err != nil {
+		return 0, err
+	}
+	price := t.BasePriceKopecks + billableKilograms(weightGrams)*t.PerKGKopecks + int64(distanceKM)*t.PerKMKopecks
+	return price, nil
 }
 
 var (
