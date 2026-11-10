@@ -2,7 +2,6 @@ package handler
 
 import (
 	"example.com/orders/internal/model"
-	"example.com/orders/internal/service"
 )
 
 type orderCreator interface {
@@ -12,7 +11,7 @@ type Handler struct {
 	orders orderCreator
 }
 
-func NewHandler(orders *service.Service) *Handler {
+func NewHandler(orders orderCreator) *Handler {
 	return &Handler{orders: orders}
 }
 
