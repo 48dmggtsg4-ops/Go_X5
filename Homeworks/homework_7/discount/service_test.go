@@ -5,6 +5,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"slices"
 )
 
 func TestValidatePercent(t *testing.T) {
@@ -48,6 +50,10 @@ func TestApply(t *testing.T) {
 		{"negative price", -50, 15, 0, ErrNegativePrice},
 		{"negative percent", 50, -15, 0, ErrInvalidPercent},
 		{"percent more than 100", 50, 101, 0, ErrInvalidPercent},
+		{"fractional result", 101, 15, 85, nil},
+		{"fraction below one", 1, 50, 0, nil},
+		{"negative price and negative percent", -50, -1, 0, ErrNegativePrice},
+		{"negative price and excessive percent", -50, 101, 0, ErrNegativePrice},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -113,13 +119,25 @@ func TestFinalPrice(t *testing.T) {
 			},
 			wantErr: ErrInvalidPercent,
 		},
+		{
+			name: "fractional result for each item",
+			items: []Item{
+				{Price: 1, DiscountPercent: 50},
+				{Price: 1, DiscountPercent: 50},
+			},
+			want: 0,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
+			before := slices.Clone(tt.items)
+
 			got, err := FinalPrice(tt.items)
+
+			assert.Equal(t, before, tt.items, "FinalPrice не должна изменять входной срез")
 
 			if tt.wantErr != nil {
 				require.ErrorIs(t, err, tt.wantErr)
