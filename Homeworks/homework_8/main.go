@@ -12,7 +12,6 @@ import (
 	"mime"
 	"net/http"
 	"os"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -65,10 +64,8 @@ func recovery(logger *slog.Logger) func(http.Handler) http.Handler {
 				if v == nil {
 					return
 				}
-				logger.Error("panic",
+				logger.Error("panic recovered",
 					"request_id", requestID(r.Context()),
-					"panic", v,
-					"stack", string(debug.Stack()),
 				)
 				if rec, ok := w.(*statusRecorder); ok && rec.wrote {
 					return

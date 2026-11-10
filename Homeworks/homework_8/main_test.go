@@ -127,3 +127,41 @@ func TestRecovery(t *testing.T) {
 	}
 	assert.Equal(t, http.StatusInternalServerError, entry.Status)
 }
+
+func TestRecoveryDoesNotLogSensitiveData(t *testing.T) {
+	t.Parallel()
+
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	secret := "customer=Anna; token=secret-token-123"
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		panic(secret)
+	})
+	h := withRequestID(recovery(logger)(handler))
+
+	rec := do(h, http.MethodGet, "/orders/1", "")
+
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+	assert.JSONEq(t,
+		`{"error":"внутренняя ошибка сервера"}`,
+		rec.Body.String(),
+	)
+
+	id := rec.Header().Get("X-Request-ID")
+	require.NotEmpty(t, id)
+
+	assert.NotContains(t, logs.String(), secret)
+	assert.NotContains(t, rec.Body.String(), secret)
+
+	var entry struct {
+		Level     string `json:"level"`
+		Message   string `json:"msg"`
+		RequestID string `json:"request_id"`
+	}
+	require.NoError(t, json.Unmarshal(logs.Bytes(), &entry))
+	assert.Equal(t, "ERROR", entry.Level)
+	assert.Equal(t, "panic recovered", entry.Message)
+	assert.Equal(t, id, entry.RequestID)
+}
