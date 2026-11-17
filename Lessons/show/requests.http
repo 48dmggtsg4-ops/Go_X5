@@ -1,0 +1,76 @@
+@base = http://127.0.0.1:8080
+
+### 1. Процесс отвечает: 200
+GET {{base}}/api/v1/status
+
+### 2. Пустая коллекция после старта: 200, []
+GET {{base}}/api/v1/orders
+
+### 3. Создание: 201, Location: /api/v1/orders/1
+POST {{base}}/api/v1/orders
+Content-Type: application/json
+
+{"customer":"Алиса"}
+
+### 4. Ещё один заказ: 201, id=2
+POST {{base}}/api/v1/orders
+Content-Type: application/json
+
+{"customer":"Боб"}
+
+### 5. Повторное имя допустимо: 201, id=3
+POST {{base}}/api/v1/orders
+Content-Type: application/json
+
+{"customer":"Алиса"}
+
+### 6. Чтение: 200
+GET {{base}}/api/v1/orders/1
+
+### 7. Фильтр и страница: 200, один заказ с id=2
+GET {{base}}/api/v1/orders?limit=1&offset=1&status=new
+
+### 8. Поддерживаемый фильтр, заказов в этом статусе нет: 200, []
+GET {{base}}/api/v1/orders?status=cancelled
+
+### 9. Неверные параметры: 400, INVALID_QUERY
+GET {{base}}/api/v1/orders?limit=0
+
+### 10. Формат идентификатора: 400, INVALID_ID
+GET {{base}}/api/v1/orders/abc
+
+### 11. Отсутствующий заказ: 404, ORDER_NOT_FOUND
+GET {{base}}/api/v1/orders/999
+
+### 12. Проверка бизнес-правила: 400, VALIDATION_ERROR
+POST {{base}}/api/v1/orders
+Content-Type: application/json
+
+{"customer":"   "}
+
+### 13. Сервер назначает id, клиент не может передать его: 400, INVALID_JSON
+POST {{base}}/api/v1/orders
+Content-Type: application/json
+
+{"customer":"Алиса","id":100}
+
+### 14. Тип тела: 415, UNSUPPORTED_MEDIA_TYPE
+POST {{base}}/api/v1/orders
+Content-Type: text/plain
+
+{"customer":"Алиса"}
+
+### 15. Второе JSON-значение: 400, INVALID_JSON
+POST {{base}}/api/v1/orders
+Content-Type: application/json
+
+{"customer":"Алиса"} {}
+
+### 16. Неподдерживаемый метод: 405, METHOD_NOT_ALLOWED + Allow
+DELETE {{base}}/api/v1/orders/1
+
+### 17. Неизвестный маршрут: 404, ROUTE_NOT_FOUND
+GET {{base}}/api/v1/not-found
+
+### 18. Документ: swagger=2.0, basePath=/api/v1
+GET {{base}}/swagger/doc.json
